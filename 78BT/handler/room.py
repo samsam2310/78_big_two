@@ -21,6 +21,20 @@ class RoomHandler(BaseHandler):
     def post(self):
         user = self.get_argument('user')
         room = self.get_argument('room')
+        if not user:
+            return self.render('room.html')
         self._RM.update({'user': user},{'$set': {'user': user, 'room': room}}, upsert=True)
         self.set_cookie('user', user)
+        self._db['RoomStatus'].update({'_id': room},{
+                '$setOnInsert':{
+                    '_id': room,
+                    'online_user': [],
+                    'status': 'init',
+                    'turn': '',
+                    'current_card': [],
+                    'card': [],
+                    'used_card': [],
+                    'room_manager': user
+                }
+            }, upsert=True)
         self.redirect('/game')
