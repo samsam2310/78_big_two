@@ -63,7 +63,7 @@ class CardSet():
             self._type = SINGLE
             self._big = cards[0]
             return
-        elif len(cards) == 2 and cards[0] == cards[1]:
+        elif len(cards) == 2 and cards[0][1] == cards[1][1]:
             self._type = PAIR
             self._big = cards[1]
             return

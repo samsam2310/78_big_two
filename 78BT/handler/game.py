@@ -163,6 +163,30 @@ class GameSocketHandler(WebSocketHandler):
                 print('Error OR Not the same type.')
             self._next_one_lock = False
 
+    def change_card(self, th_c):
+        user = self.get_cookie('user')
+        you = self._M.find_one({'name': user})
+        for c in th_c:
+            if not c in you['your_card']:
+                self._next_one_lock = False
+                return
+        rs = self._RS.find_one({'_id': self._room})
+        your_cs = sebigtwo.CardSet.gen(th_c + rs['current_card'])
+        if len(rs['current_card']) and your_cs:
+            self._RS.update({'_id': self._room}, {'$set': {'current_card': th_c + rs['current_card'], 'setcard_num': rs['turn_num']}})
+            you = self._M.find_one_and_update({'name': user},
+                    {'$pullAll': {'your_card': th_c}},
+                    return_document=ReturnDocument.AFTER)
+            if len(you.get('your_card',[])) == 0:
+                self.game_over()
+            self.next_one()
+        else:
+            if len(rs['current_card']):
+                print('Error type.')
+            else:
+                print('No current card.')
+            self._next_one_lock = False
+
     def next_one(self):
         rmc = self._M.find().count()
         rs = self._RS.find_one({'_id': self._room})
@@ -222,8 +246,10 @@ class GameSocketHandler(WebSocketHandler):
             if self.check_game_status('playing') and self._is_your_turn and not self._next_one_lock:
                 self._next_one_lock = True
                 self.throw_card(data['card'])
-        elif req == '':
-            pass
+        elif req == 'change':
+            if self.check_game_status('playing') and self._is_your_turn and not self._next_one_lock:
+                self._next_one_lock = True
+                self.change_card(data['card'])
 
     @gen.coroutine
     def game_loop(self):

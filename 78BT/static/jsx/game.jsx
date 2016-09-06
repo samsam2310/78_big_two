@@ -17,13 +17,13 @@
         componentWillReceiveProps: function(nxtProp) {
             if(nxtProp.cards)this.setState({status: []});
         },
-        handleTrow: function(){
-            console.log('handleTrow');
+        handleTrow: function(type){
+            console.log('handle '+type);
             var ch_cs = [];
             for(var i in this.props.cards){
                 if(this.state.status[i])ch_cs.push(this.props.cards[i])
             }
-            this.props.onClick({type: 'throw', card: ch_cs});
+            this.props.onClick({type: type, card: ch_cs});
         },
         render: function() {
             var that = this;
@@ -60,7 +60,8 @@
                     <div>
                         {start_btn}
                         {reset_btn}
-                        <button disabled={!this.props.is_your_turn} onClick={this.handleTrow}>出牌</button>
+                        <button disabled={!this.props.is_your_turn} onClick={function(){that.handleTrow('change')}}>換牌</button>
+                        <button disabled={!this.props.is_your_turn} onClick={function(){that.handleTrow('throw')}}>出牌</button>
                         <button disabled={!this.props.is_your_turn} onClick={function(){that.props.onClick({'type':'pick'})}}>抽牌</button>
                     </div>
                 </div>
@@ -109,6 +110,8 @@
                 this.send({'req': 'throw', card: cli.card});
                 console.log('throw');
                 console.log(cli.card);
+            }else if(cli.type=='change'){
+                this.send({'req': 'change', card: cli.card});
             }else if(cli.type=='pick'){
                 this.send({'req': 'pick'});
                 console.log('pick');
