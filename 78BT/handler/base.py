@@ -11,19 +11,19 @@ from datetime import datetime
 # import os
 import tornado.web
 
-from ..db import db
+from ..db import db_gen
 
 
 class BaseHandler(tornado.web.RequestHandler):
     def initialize(self):
         """ This method run at handler object initialize.
         """
-        self._db = db
+        pass
 
     def prepare(self):
         """This method is executed at the beginning of each request.
         """
-        pass
+        self._db = db_gen()
 
     def on_finish(self):
         """Finish this response, ending the HTTP request 

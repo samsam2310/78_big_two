@@ -11,7 +11,7 @@ from pymongo import MongoClient
 import os
 
 
-__all__ = ['db','get_list_without_key']
+__all__ = ['db_gen','get_list_without_key']
 
 
 DB_HOST = os.environ.get('DB_HOST', 'localhost')
@@ -22,9 +22,12 @@ DB_NAME = os.environ.get('DB_NAME', 'bigtwo')
 
 print("DB: %s@%s:%d/%s" % (DB_USER, DB_HOST, DB_PORT, DB_NAME))
 
-db = MongoClient(host=DB_HOST, port=DB_PORT)[DB_NAME]
-if DB_USER != '':
-    db.authenticate(DB_USER, DB_PWD)
+
+def db_gen():
+    db = MongoClient(host=DB_HOST, port=DB_PORT)[DB_NAME]
+    if DB_USER != '':
+        db.authenticate(DB_USER, DB_PWD)
+    return db
 
 
 def get_list_without_key(cursor, keys):

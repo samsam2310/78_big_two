@@ -9,10 +9,10 @@ from .base import BaseHandler
 
 
 class RoomHandler(BaseHandler):
-    def initialize(self):
+    def prepare(self):
         """ This method run at handler object initialize.
         """
-        super(self.__class__, self).initialize()
+        super(self.__class__, self).prepare()
         self._RM = self._db['RoomMember']
 
     def get(self):
@@ -31,10 +31,13 @@ class RoomHandler(BaseHandler):
                     'online_user': [],
                     'status': 'init',
                     'turn': '',
+                    'turn_num': -1,
                     'current_card': [],
                     'card': [],
                     'used_card': [],
-                    'room_manager': user
+                    'room_manager': user,
+                    'place_cnt': 0,
+                    'playing_user': 0,
                 }
             }, upsert=True)
         self.redirect('/game')
