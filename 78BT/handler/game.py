@@ -16,7 +16,7 @@ import hashlib
 
 from .base import BaseHandler
 from ..db import db_gen, get_list_without_key
-from ..poker import Poker
+from ..poker import Poker, sebigtwo
 
 
 CARD_LIMIT = 12
@@ -85,6 +85,7 @@ class GameSocketHandler(WebSocketHandler):
                 'status': 'init',
                 'turn': '',
                 'turn_num': -1,
+                'setcard_num': -1,
                 'current_card': [],
                 'card': [],
                 'used_card': [],
@@ -108,6 +109,7 @@ class GameSocketHandler(WebSocketHandler):
                 'current_card': [fc],
                 'card': poker.to_list(),
                 'turn_num': 0,
+                'setcard_num': -1,
                 'turn': fp['name'],
                 'used_card': [],
                 'place_cnt': 0,
@@ -136,24 +138,45 @@ class GameSocketHandler(WebSocketHandler):
             self.game_over(True)
         self.next_one()
 
-    def throw_card(self, th_cs):
+    def throw_card(self, th_c):
+        user = self.get_cookie('user')
         you = self._M.find_one({'name': user})
-        for c in th_cs:
+        for c in th_c:
             if not c in you['your_card']:
                 self._next_one_lock = False
                 return
-        pass
-        self.next_one()
+        rs = self._RS.find_one({'_id': self._room})
+        crnt_cs = sebigtwo.CardSet.gen(rs['current_card'])
+        your_cs = sebigtwo.CardSet.gen(th_c)
+        if your_cs and (not crnt_cs or sebigtwo.CardSet.comp(crnt_cs, your_cs) == 1):
+            self._RS.update({'_id': self._room}, {'$set': {'current_card': th_c, 'setcard_num': rs['turn_num']}})
+            you = self._M.find_one_and_update({'name': user},
+                    {'$pullAll': {'your_card': th_c}},
+                    return_document=ReturnDocument.AFTER)
+            if len(you.get('your_card',[])) == 0:
+                self.game_over()
+            self.next_one()
+        else:
+            if crnt_cs and your_cs and sebigtwo.CardSet.comp(crnt_cs, your_cs) == 0:
+                print('Smaller.')
+            else:
+                print('Error OR Not the same type.')
+            self._next_one_lock = False
 
     def next_one(self):
         rmc = self._M.find().count()
-        ntn = self._status['turn_num']
+        rs = self._RS.find_one({'_id': self._room})
+        ntn = rs['turn_num']
         for i in range(rmc):
             ntn = ntn+1 if ntn+1<rmc else 0
             nxtp = self._M.find().sort('sign').skip(ntn).limit(1).next()
             print("DB: ntn: %d, nxtp: %s" % (ntn, nxtp['name']))
             if nxtp['status'] == 'playing':
-                self._RS.update({'_id': self._room},{'$set': {'turn': nxtp['name'], 'turn_num': ntn}})
+                current_card = [] if rs['setcard_num'] == ntn else rs['current_card']
+                self._RS.update({'_id': self._room},{'$set': {
+                        'turn': nxtp['name'],
+                        'turn_num': ntn,
+                        'current_card': current_card}})
                 self._next_one_lock = False
                 break
 
@@ -168,7 +191,8 @@ class GameSocketHandler(WebSocketHandler):
                 'place': place,
                 'your_card': [],
                 'card': 0}})
-        self._RS.update({'_id': self._room}, {'$push': {'used_card': {'$each': you['your_card']}}})
+        if len(you.get('your_card',[])):
+            self._RS.update({'_id': self._room}, {'$push': {'used_card': {'$each': you['your_card']}}})
 
     def stop_game(self):
         print('Stop Game')
@@ -235,7 +259,9 @@ class GameSocketHandler(WebSocketHandler):
             yield gen.sleep(0.5)
 
     def drop_room(self):
+        print('drop room')
         self._RS.delete_one({'_id': self._room})
+        self._RM.delete_many({'room': self._room})
         self._db.drop_collection(self._room+'-Member')
 
     def on_close(self):
@@ -246,7 +272,8 @@ class GameSocketHandler(WebSocketHandler):
                 {'_id': self._room},
                 {'$pull': {'online_user': user}},
                 return_document=ReturnDocument.AFTER)
-        if not rs or rs.get('online_user') and len(rs['online_user']) == 0:
+        print('Online user num : %d' % len(rs.get('online_user', [])))
+        if not rs or len(rs.get('online_user', [])) == 0:
             self.drop_room()
         print("WebSocket closed")
 

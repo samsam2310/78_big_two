@@ -32,6 +32,7 @@ class RoomHandler(BaseHandler):
                     'status': 'init',
                     'turn': '',
                     'turn_num': -1,
+                    'setcard_num': -1,
                     'current_card': [],
                     'card': [],
                     'used_card': [],

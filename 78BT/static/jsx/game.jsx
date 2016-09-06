@@ -5,7 +5,7 @@
             var cards = this.props.cards.map(function(v){
                 return (<span>{v}</span>);
             });
-            return (<div>{cards}</div>);
+            return (<div>current_card: {cards}</div>);
         }
     });
     var Player = React.createClass({
@@ -18,7 +18,8 @@
             if(nxtProp.cards)this.setState({status: []});
         },
         handleTrow: function(){
-            ch_cs = [];
+            console.log('handleTrow');
+            var ch_cs = [];
             for(var i in this.props.cards){
                 if(this.state.status[i])ch_cs.push(this.props.cards[i])
             }
@@ -59,7 +60,7 @@
                     <div>
                         {start_btn}
                         {reset_btn}
-                        <button disabled={!this.props.is_your_turn} onClick={function(){that.handleTrow}}>出牌</button>
+                        <button disabled={!this.props.is_your_turn} onClick={this.handleTrow}>出牌</button>
                         <button disabled={!this.props.is_your_turn} onClick={function(){that.props.onClick({'type':'pick'})}}>抽牌</button>
                     </div>
                 </div>

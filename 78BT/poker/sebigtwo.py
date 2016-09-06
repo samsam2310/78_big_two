@@ -6,7 +6,7 @@
 from . import POKER_CARD, ALPHA
 
 
-def to_number(alpha, ATO1=False):
+def to_number(alpha, ATO1=False, bigtwo=False):
     if alpha == 'T':
         return 10
     if alpha == 'J':
@@ -17,10 +17,13 @@ def to_number(alpha, ATO1=False):
         return 13
     if alpha == 'A':
         return 1 if ATO1 else 14
-    return int(alpha)
+    n = int(alpha)
+    if n == 2 and bigtwo:
+        n = 15
+    return n
 
-def comp_poker(a, b):
-    return to_number(a[1]) < to_number(b[1]) if a[1] != b[1] else a[0] < b[0]
+def comp_poker(a, b, bigtwo=False):
+    return to_number(a[1], bigtwo=bigtwo) < to_number(b[1], bigtwo=bigtwo) if a[1] != b[1] else a[0] < b[0]
 
 def check_straight(cards, l=5):
     for i in range(l-1):
@@ -48,11 +51,11 @@ class CardSet():
         for c in cards:
             if not c in POKER_CARD:
                 raise Exception()
-        self.check_type()
+        self.check_type(cards)
         if self._type == -1:
             raise Exception()
         
-    def check_type(self):
+    def check_type(self, cards):
         self._type = -1
         self._big = ''
         sorted(cards, comp_poker)
@@ -99,10 +102,17 @@ class CardSet():
                 self._big = cards[12]
                 return
 
-    @staticMethod
+    @staticmethod
     def comp(a, b):
         if a._type == b._type:
-            return 1 if comp_poker(a._big, b._big) else 0
+            return 1 if comp_poker(a._big, b._big, bigtwo=True) else 0
         elif a._type >= FOUROFAKIND or b._type >= FOUROFAKIND:
             return 1 if a._type < b._type else 0
         return -1
+
+    @classmethod
+    def gen(cls, cards):
+        try:
+            return cls(cards)
+        except Exception:
+            return None
