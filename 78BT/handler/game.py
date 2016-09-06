@@ -136,6 +136,15 @@ class GameSocketHandler(WebSocketHandler):
             self.game_over(True)
         self.next_one()
 
+    def throw_card(self, th_cs):
+        you = self._M.find_one({'name': user})
+        for c in th_cs:
+            if not c in you['your_card']:
+                self._next_one_lock = False
+                return
+        pass
+        self.next_one()
+
     def next_one(self):
         rmc = self._M.find().count()
         ntn = self._status['turn_num']
@@ -182,10 +191,13 @@ class GameSocketHandler(WebSocketHandler):
             if self.check_game_status('playing') and self._is_your_turn and not self._next_one_lock:
                 self._next_one_lock = True
                 self.pick_card()
-                self.next_one()
         elif req == 'reset':
             if self.check_game_status('gameover') and self._status['room_manager'] == user:
                 self.reset_game()
+        elif req == 'throw':
+            if self.check_game_status('playing') and self._is_your_turn and not self._next_one_lock:
+                self._next_one_lock = True
+                self.throw_card(data['card'])
         elif req == '':
             pass
 

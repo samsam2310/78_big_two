@@ -20,6 +20,10 @@ for i in range(4):
 class Poker():
     def __init__(self, cards=None):
         if cards:
+            for c in cards:
+                if not c in POKER_CARD:
+                    raise Exception()
+
             self._cards = list(cards)
         else:
             self._cards = list(POKER_CARD)

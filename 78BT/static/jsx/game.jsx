@@ -18,7 +18,11 @@
             if(nxtProp.cards)this.setState({status: []});
         },
         handleTrow: function(){
-            ;
+            ch_cs = [];
+            for(var i in this.props.cards){
+                if(this.state.status[i])ch_cs.push(this.props.cards[i])
+            }
+            this.props.onClick({type: 'throw', card: ch_cs});
         },
         render: function() {
             var that = this;
@@ -101,7 +105,9 @@
             }else if(cli.type=='reset'){
                 this.send({'req': 'reset'});
             }else if(cli.type=='throw'){
+                this.send({'req': 'throw', card: cli.card});
                 console.log('throw');
+                console.log(cli.card);
             }else if(cli.type=='pick'){
                 this.send({'req': 'pick'});
                 console.log('pick');
