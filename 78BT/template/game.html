@@ -4,8 +4,8 @@
 {% end %}
 
 {% block body %}
-<h1>Room: {{ room }}</h1>
-<p>You are: {{user}}</p>
+<h1 class="room-title">#room-{{ room }}</h1>
+<div class="you_are"><span class="attr_title">You are</span>{{user}}</div>
 <div id="groot"></div>
 <script type="text/babel" src="{{ static_url('jsx/game.jsx') }}"></script>
 {% end %}
