@@ -1,6 +1,24 @@
-<form action="/room" method="post">
-    <input type="text" name="user">
-    @
-    <input type="text" name="room">
-    <input type="submit">
-</form>
+{% extends "base.html" %}
+
+{% block head %}
+{% end %}
+
+{% block body %}
+
+<div class="lvc">
+  <h1>78BT</h1>
+  <p>Input any channel with your name to get started.</p>
+  <form action="/room" method="post" class="form-inline">
+    <div class="form-group">
+      <input type="text" name="user"  class="form-control" placeholder="Your Name">
+    </div>
+      @
+    <div class="form-group">
+      <input type="text" name="room" class="form-control" placeholder="Channel Name">
+    </div>
+    <div class="form-group">
+      <input type="submit" class="btn btn-success" value="Join in">
+    </div>
+  </form>
+</div>
+{% end %}
