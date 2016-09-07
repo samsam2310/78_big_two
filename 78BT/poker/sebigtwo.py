@@ -3,7 +3,7 @@
 """ poker - bigtwo
 """
 
-from . import POKER_CARD, ALPHA
+from . import POKER_CARD
 
 
 def to_number(alpha, ATO1=False, bigtwo=False):
@@ -23,7 +23,11 @@ def to_number(alpha, ATO1=False, bigtwo=False):
     return n
 
 def comp_poker(a, b, bigtwo=False):
-    return to_number(a[1], bigtwo=bigtwo) < to_number(b[1], bigtwo=bigtwo) if a[1] != b[1] else a[0] < b[0]
+    if a == b:
+        return 0
+    if a[1] == b[1]:
+        return -1 if a[0] < b[0] else 1
+    return -1 if to_number(a[1], bigtwo=bigtwo) < to_number(b[1], bigtwo=bigtwo) else 1
 
 def check_straight(cards, l=5):
     for i in range(l-1):
@@ -55,10 +59,11 @@ class CardSet():
         if self._type == -1:
             raise Exception()
         
-    def check_type(self, cards):
+    def check_type(self, unsorted_cards):
         self._type = -1
         self._big = ''
-        sorted(cards, comp_poker)
+        cards = sorted(unsorted_cards, comp_poker)
+        print(cards)
         if len(cards) == 1:
             self._type = SINGLE
             self._big = cards[0]

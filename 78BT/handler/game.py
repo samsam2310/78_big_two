@@ -19,7 +19,8 @@ from ..db import db_gen, get_list_without_key
 from ..poker import Poker, sebigtwo
 
 
-CARD_LIMIT = 12
+CARD_INIT = 5
+CARD_LIMIT = 13
 
 class GameSocketHandler(WebSocketHandler):
     def prepare(self):
@@ -30,26 +31,32 @@ class GameSocketHandler(WebSocketHandler):
         self._RM = self._db['RoomMember']
         self._RS = self._db['RoomStatus']
         self._hash = {}
-        self._status = None
         self._next_one_lock = False
 
-    def check_cache(self, key, data):
-        h = hashlib.sha256(json.dumps(data,sort_keys=True)).hexdigest()
-        oh = self._hash.get(key)
-        if h == oh:
-            return True
-        self._hash[key] = h
-        return False
+    # ----- DB -----
+    def get_status(self):
+        return self._RS.find_one({'_id': self._room})
 
-    def write_json(self, data):
-        # print("Write: ")
-        # print(data)
-        self.write_message(json.dumps(data))
+    def update_status(self, up, rtn=False, rtn_after=False):
+        if not rtn:
+            self._RS.update({'_id': self._room}, up)
+            return None
+        opt = ReturnDocument.AFTER if rtn_after else ReturnDocument.BEFORE
+        return self._RS.find_one_and_update({'_id': self._room}, up, return_document=opt)
 
-    def write_json_with_cache(self, key, data):
-        if not self.check_cache(key,data):
-            self.write_json(data)
+    def get_you(self):
+        user = self.get_cookie('user')
+        return self._M.find_one({'name': user})
 
+    def update_you(self, up, rtn=False, rtn_after=False):
+        user = self.get_cookie('user')
+        if not rtn:
+            self._M.update({'name': user}, up)
+            return None
+        opt = ReturnDocument.AFTER if rtn_after else ReturnDocument.BEFORE
+        return self._M.find_one_and_update({'name': user}, up, return_document=opt)
+
+    # ----- Game -----
     @gen.coroutine
     def open(self):
         print("WebSocket opened")
@@ -71,17 +78,15 @@ class GameSocketHandler(WebSocketHandler):
                     },'$set':{
                         'conn': True
                     }},upsert=True)
-            you = self._M.find_one({'name': user})
+            # you = self._M.find_one({'name': user})
             yield self.game_loop()
         else:
             print('Watching')
 
-    def check_game_status(self, sts):
-        return self._status and self._status['status'] == sts
-
+    # ----- Game init, reset and stop -----
     def reset_game(self):
         print('Reset Game')
-        self._RS.update({'_id': self._room},{'$set': {
+        self.update_status({'$set': {
                 'status': 'init',
                 'turn': '',
                 'turn_num': -1,
@@ -97,14 +102,18 @@ class GameSocketHandler(WebSocketHandler):
         print('Start Game')
         poker = Poker()
         poker.wash()
-        rmc = 0
+        playing_user = 0
         for m in self._M.find().sort('sign'):
-            card = poker.pick_many(5)
-            self._M.update({'_id': m['_id']}, {'$set': {'status':'playing','your_card': card, 'card': 5}})
-            rmc += 1
+            card = poker.pick_many(CARD_INIT)
+            self._M.update({'_id': m['_id']}, {'$set': {
+                    'status':'playing',
+                    'your_card': card,
+                    'card': CARD_INIT
+                }})
+            playing_user += 1
         fc = poker.pick()
         fp = self._M.find().sort('sign').limit(1).next()
-        self._RS.update({'_id': self._room},{'$set': {
+        self.update_status({'$set': {
                 'status': 'playing',
                 'current_card': [fc],
                 'card': poker.to_list(),
@@ -113,141 +122,171 @@ class GameSocketHandler(WebSocketHandler):
                 'turn': fp['name'],
                 'used_card': [],
                 'place_cnt': 0,
-                'playing_user': rmc
+                'playing_user': playing_user
             }})
-
-    def pick_card(self):
-        user = self.get_cookie('user')
-        card = self._status['card']
-        used_card = self._status['used_card']
-        poker = Poker(card)
-        c = poker.pick()
-        if not c:
-            poker = Poker(used_card)
-            used_card = []
-            poker.wash()
-            c = poker.pick()
-        card = poker.to_list()
-        self._RS.update({'_id': self._room}, {'$set': {'card': card, 'used_card': used_card}})
-
-        if c:
-            you = self._M.find_one_and_update({'name': user},
-                    {'$addToSet': {'your_card': c}, '$inc': {'card': 1}},
-                    return_document=ReturnDocument.AFTER)
-        if not c or you['card'] >= CARD_LIMIT:
-            self.game_over(True)
-        self.next_one()
-
-    def throw_card(self, th_c):
-        user = self.get_cookie('user')
-        you = self._M.find_one({'name': user})
-        for c in th_c:
-            if not c in you['your_card']:
-                self._next_one_lock = False
-                return
-        rs = self._RS.find_one({'_id': self._room})
-        crnt_cs = sebigtwo.CardSet.gen(rs['current_card'])
-        your_cs = sebigtwo.CardSet.gen(th_c)
-        if your_cs and (not crnt_cs or sebigtwo.CardSet.comp(crnt_cs, your_cs) == 1):
-            self._RS.update({'_id': self._room}, {'$set': {'current_card': th_c, 'setcard_num': rs['turn_num']}})
-            you = self._M.find_one_and_update({'name': user},
-                    {'$pullAll': {'your_card': th_c}},
-                    return_document=ReturnDocument.AFTER)
-            if len(you.get('your_card',[])) == 0:
-                self.game_over()
-            self.next_one()
-        else:
-            if crnt_cs and your_cs and sebigtwo.CardSet.comp(crnt_cs, your_cs) == 0:
-                print('Smaller.')
-            else:
-                print('Error OR Not the same type.')
-            self._next_one_lock = False
-
-    def change_card(self, th_c):
-        user = self.get_cookie('user')
-        you = self._M.find_one({'name': user})
-        for c in th_c:
-            if not c in you['your_card']:
-                self._next_one_lock = False
-                return
-        rs = self._RS.find_one({'_id': self._room})
-        your_cs = sebigtwo.CardSet.gen(th_c + rs['current_card'])
-        if len(rs['current_card']) and your_cs:
-            self._RS.update({'_id': self._room}, {'$set': {'current_card': th_c + rs['current_card'], 'setcard_num': rs['turn_num']}})
-            you = self._M.find_one_and_update({'name': user},
-                    {'$pullAll': {'your_card': th_c}},
-                    return_document=ReturnDocument.AFTER)
-            if len(you.get('your_card',[])) == 0:
-                self.game_over()
-            self.next_one()
-        else:
-            if len(rs['current_card']):
-                print('Error type.')
-            else:
-                print('No current card.')
-            self._next_one_lock = False
-
-    def next_one(self):
-        rmc = self._M.find().count()
-        rs = self._RS.find_one({'_id': self._room})
-        ntn = rs['turn_num']
-        for i in range(rmc):
-            ntn = ntn+1 if ntn+1<rmc else 0
-            nxtp = self._M.find().sort('sign').skip(ntn).limit(1).next()
-            print("DB: ntn: %d, nxtp: %s" % (ntn, nxtp['name']))
-            if nxtp['status'] == 'playing':
-                current_card = [] if rs['setcard_num'] == ntn else rs['current_card']
-                self._RS.update({'_id': self._room},{'$set': {
-                        'turn': nxtp['name'],
-                        'turn_num': ntn,
-                        'current_card': current_card}})
-                self._next_one_lock = False
-                break
-
-    def game_over(self, loss=False):
-        user = self.get_cookie('user')
-        status = self._RS.find_one_and_update({'_id': self._room},
-                {'$inc': {'playing_user': -1, 'place_cnt': 0 if loss else 1 }},
-                return_document=ReturnDocument.AFTER)
-        place = -1 if loss else status['place_cnt']
-        you = self._M.find_one_and_update({'name': user}, {'$set': {
-                'status': 'gameover',
-                'place': place,
-                'your_card': [],
-                'card': 0}})
-        if len(you.get('your_card',[])):
-            self._RS.update({'_id': self._room}, {'$push': {'used_card': {'$each': you['your_card']}}})
 
     def stop_game(self):
         print('Stop Game')
-        self._RS.update({'_id': self._room},{'$set': {
+        self.update_status({'$set': {
                 'status': 'gameover',
                 'turn_num': -1,
                 'turn': '',
                 'playing_user': 0
             }})
 
+    # ----- Game Action -----
+    def pick_card(self):
+        status = self.get_status()
+        if len(status['current_card']) == 0:
+            print('Do not pick card!')
+            self._next_one_lock = False
+            return
+
+        up = {}
+        poker = None
+        if len(status['card']):
+            poker = Poker(status['card'])
+        elif len(status['used_card']):
+            poker = Poker(status['used_card'])
+            poker.wash()
+            up['used_card'] = []
+        else:
+            print('Error: Card not enough.')
+            self._next_one_lock = False
+            return
+        
+        c = poker.pick()
+        up['card'] = poker.to_list()
+        self.update_status({'$set': up})
+
+        you = self.update_you({'$addToSet': {'your_card': c}, '$inc': {'card': 1}}, True, True)
+        if you['card'] >= CARD_LIMIT:
+            self.game_over(True)
+        self.next_one()
+
+    def throw_card(self, th_c):
+        you = self.get_you()
+        for c in th_c:
+            if not c in you['your_card']:
+                self._next_one_lock = False
+                return
+        status = self.get_status()
+        crnt_set = sebigtwo.CardSet.gen(status['current_card'])
+        your_set = sebigtwo.CardSet.gen(th_c)
+        if your_set and (not crnt_set or sebigtwo.CardSet.comp(crnt_set, your_set) == 1):
+            self.update_status({'$set': {'current_card': th_c, 'setcard_num': status['turn_num']}})
+            up = {}
+            up['your_card'] = [c for c in you['your_card'] if not c in th_c]
+            up['card'] = len(up['your_card'])
+            self.update_you({'$set': up})
+            if up['card'] == 0:
+                self.game_over()
+            self.next_one()
+        else:
+            if crnt_cs and your_cs and sebigtwo.CardSet.comp(crnt_cs, your_cs) == 0:
+                print('Throw: Smaller.')
+            else:
+                print('Throw: Not the same type.')
+            self._next_one_lock = False
+
+    def change_card(self, th_c):
+        you = self.get_you()
+        for c in th_c:
+            if not c in you['your_card']:
+                self._next_one_lock = False
+                return
+        status = self.get_status()
+        your_set = sebigtwo.CardSet.gen(th_c + status['current_card'])
+        if len(status['current_card']) and your_set:
+            self.update_status({'$set': {
+                    'current_card': th_c + status['current_card'],
+                    'setcard_num': status['turn_num']}})
+            up = {}
+            up['your_card'] = [c for c in you['your_card'] if not c in th_c]
+            up['card'] = len(up['your_card'])
+            self.update_you({'$set': up})
+            if up['card'] == 0:
+                self.game_over()
+            self.next_one()
+        else:
+            if len(status['current_card']):
+                print('Error type.')
+            else:
+                print('No current card.')
+            self._next_one_lock = False
+
+    # ----- Game Process -----
+    def next_one(self):
+        playing_user = self._M.find().count()
+        status = self.get_status()
+        trn = status['turn_num']
+        for i in range(playing_user):
+            trn = trn+1 if trn+1 < playing_user else 0
+            next_p = self._M.find().sort('sign').skip(trn).limit(1).next()
+            if next_p['status'] == 'playing':
+                up = {}
+                if status['setcard_num'] == trn:
+                    up['current_card'] = []
+                up['turn'] = next_p['name']
+                up['turn_num'] = trn
+                self.update_status({'$set': up})
+                self._next_one_lock = False
+                break
+
+    def game_over(self, loss=False):
+        # user = self.get_cookie('user')
+        up = {}
+        up['playing_user'] = -1
+        if not loss:
+            up['place_cnt'] = 1
+        status = self.update_status({'$inc': up}, True, True)
+        up = {}
+        up['place'] = -1 if loss else status['place_cnt']
+        up['status'] = 'gameover'
+        up['your_card'] = []
+        up['card'] = 0
+        you = self.update_you({'$set': up}, True, False)
+        if len(you['your_card']):
+            self.update_status({'$push': {'used_card': {'$each': you['your_card']}}})
+
+    # ----- websocket ------
+    def check_cache(self, key, data):
+        h = hashlib.sha256(json.dumps(data,sort_keys=True)).hexdigest()
+        oh = self._hash.get(key)
+        if h == oh:
+            return True
+        self._hash[key] = h
+        return False
+
+    def write_json(self, data):
+        self.write_message(json.dumps(data))
+
+    def write_json_with_cache(self, key, data):
+        if not self.check_cache(key,data):
+            self.write_json(data)
+
     def on_message(self, message):
         user = self.get_cookie('user')
+        status = self.get_status()
         data = json.loads(message)
         req = data['req']
         if req == 'start':
-            if self.check_game_status('init') and self._status['room_manager'] == user:
+            if status['status'] == 'init' and status['room_manager'] == user:
                 self.start_game()
         elif req == 'pick':
             print("pick")
-            if self.check_game_status('playing') and self._is_your_turn and not self._next_one_lock:
+            if status['status'] == 'playing' and self._is_your_turn and not self._next_one_lock:
                 self._next_one_lock = True
                 self.pick_card()
         elif req == 'reset':
-            if self.check_game_status('gameover') and self._status['room_manager'] == user:
+            if status['status'] == 'gameover' and status['room_manager'] == user:
                 self.reset_game()
         elif req == 'throw':
-            if self.check_game_status('playing') and self._is_your_turn and not self._next_one_lock:
+            if status['status'] == 'playing' and self._is_your_turn and not self._next_one_lock:
                 self._next_one_lock = True
                 self.throw_card(data['card'])
         elif req == 'change':
-            if self.check_game_status('playing') and self._is_your_turn and not self._next_one_lock:
+            if status['status'] == 'playing' and self._is_your_turn and not self._next_one_lock:
                 self._next_one_lock = True
                 self.change_card(data['card'])
 
@@ -255,18 +294,21 @@ class GameSocketHandler(WebSocketHandler):
     def game_loop(self):
         user = self.get_cookie('user')
         while self._conn:
-            players = get_list_without_key(self._M.find().sort('sign'), ['_id', 'sign', 'your_card'])
-            status = self._status = self._RS.find_one({'_id': self._room})
-            you = self._M.find_one({'name': user})
+            player_list = get_list_without_key(self._M.find().sort('sign'), ['_id', 'sign', 'your_card'])
+            status = self.get_status()
+            you = self.get_you()
+            if not player_list or not status or not you:
+                yield gen.sleep(0.5)
+                continue
 
-            self._is_your_turn = status and you and you['name'] == status['turn']
-            if not self._next_one_lock and status and you and status['playing_user'] == 1 and you['status'] == 'playing':
+            self._is_your_turn = you['name'] == status['turn']
+            if not self._next_one_lock and status['playing_user'] == 1 and you['status'] == 'playing':
                 self.game_over()
                 self.stop_game()
 
-            if players and not self.check_cache('players', players):
-                self.write_json({'$set': {'players': players}})
-            if status and not self.check_cache('status', status):
+            if not self.check_cache('players', player_list):
+                self.write_json({'$set': {'players': player_list}})
+            if not self.check_cache('status', status):
                 self.write_json({'$set': {
                         'current_card': status['current_card'],
                         'room_manager': status['room_manager'],
@@ -276,7 +318,7 @@ class GameSocketHandler(WebSocketHandler):
                         'turn': status['turn'],
                     }})
             you_data = dict((k, you[k]) for k in ['your_card', 'name'])
-            if you_data and not self.check_cache('you', you_data):
+            if not self.check_cache('you', you_data):
                 self.write_json({'$set':{
                         'your_name': you_data['name'],
                         'your_card': you_data['your_card']
@@ -291,15 +333,12 @@ class GameSocketHandler(WebSocketHandler):
         self._db.drop_collection(self._room+'-Member')
 
     def on_close(self):
-        user = self.get_cookie('user')
-        self._M.update({'name':user},{'$set': {'conn': False}})
+        self.update_you({'$set': {'conn': False}})
         self._conn = False
-        rs = self._RS.find_one_and_update(
-                {'_id': self._room},
-                {'$pull': {'online_user': user}},
-                return_document=ReturnDocument.AFTER)
-        print('Online user num : %d' % len(rs.get('online_user', [])))
-        if not rs or len(rs.get('online_user', [])) == 0:
+        user = self.get_cookie('user')
+        status = self.update_status({'$pull': {'online_user': user}}, True, True)
+        # print('Online user num : %d' % len(rs.get('online_user', [])))
+        if len(status.get('online_user', [])) == 0:
             self.drop_room()
         print("WebSocket closed")
 
