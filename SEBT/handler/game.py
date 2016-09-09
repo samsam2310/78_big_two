@@ -6,6 +6,7 @@
 from __future__ import absolute_import, print_function, unicode_literals
 
 from tornado.websocket import WebSocketHandler
+from tornado.ioloop import IOLoop
 from tornado import gen
 from datetime import datetime
 from pymongo.collection import ReturnDocument
@@ -13,12 +14,15 @@ from pymongo.collection import ReturnDocument
 import pymongo
 import json
 import hashlib
+import time
 
 from .base import BaseHandler
 from ..db import db_gen, get_list_without_key
 from ..poker import Poker, sebigtwo
 
 
+ROUND_SEC = 2
+DEADLINE_BUFFER_SEC = 3
 CARD_INIT = 5
 CARD_LIMIT = 13
 
@@ -32,24 +36,41 @@ class GameSocketHandler(WebSocketHandler):
         self._RS = self._db['RoomStatus']
         self._hash = {}
         self._next_one_lock = False
+        # self._db_catch = {}
 
-    # ----- DB -----
+    # ----- DB and DB catch-----
     def get_status(self):
+        # if not self._db_catch.get('status'):
+        #     self._db_catch['status'] = self._RS.find_one({'_id': self._room})
+        # return self._db_catch['status']
         return self._RS.find_one({'_id': self._room})
 
     def update_status(self, up, rtn=False, rtn_after=False):
+        # self._db_catch.pop('status')
         if not rtn:
             self._RS.update({'_id': self._room}, up)
             return None
         opt = ReturnDocument.AFTER if rtn_after else ReturnDocument.BEFORE
         return self._RS.find_one_and_update({'_id': self._room}, up, return_document=opt)
 
-    def get_you(self):
+    def get_you(self, other=None):
+        # do not use catch
+        if other:
+            return self._M.find_one({'name': other})
+        # use catch
+        # if not self._db_catch.get('you'):
+        #     user = self.get_cookie('user')
+        #     self._db_catch['you'] = self._M.find_one({'name': user})
+        # return self._db_catch['you']
         user = self.get_cookie('user')
         return self._M.find_one({'name': user})
 
-    def update_you(self, up, rtn=False, rtn_after=False):
-        user = self.get_cookie('user')
+    def update_you(self, up, rtn=False, rtn_after=False, other=None):
+        if not other:
+            user = self.get_cookie('user')
+            # self._db_catch.pop('you')
+        else:
+            user = other
         if not rtn:
             self._M.update({'name': user}, up)
             return None
@@ -66,7 +87,7 @@ class GameSocketHandler(WebSocketHandler):
         if rm:
             self._room = rm['room']
             self._M = self._db[self._room+'-Member']
-            self._RS.update({'_id': self._room}, {'$addToSet': {'online_user': user}})
+            self.update_status({'$addToSet': {'online_user': user}})
             self._M.update({'name': user},{
                     '$setOnInsert': {
                         'status': 'init',
@@ -75,10 +96,10 @@ class GameSocketHandler(WebSocketHandler):
                         'sign': datetime.utcnow(),
                         'your_card': [],
                         'place': 0,
+                        'deadline': 0,
                     },'$set':{
                         'conn': True
                     }},upsert=True)
-            # you = self._M.find_one({'name': user})
             yield self.game_loop()
         else:
             print('Watching')
@@ -122,7 +143,8 @@ class GameSocketHandler(WebSocketHandler):
                 'turn': fp['name'],
                 'used_card': [],
                 'place_cnt': 0,
-                'playing_user': playing_user
+                'playing_user': playing_user,
+                'time': self.get_now_time()
             }})
 
     def stop_game(self):
@@ -135,11 +157,15 @@ class GameSocketHandler(WebSocketHandler):
             }})
 
     # ----- Game Action -----
-    def pick_card(self):
+    def pick_card(self, other=None):
         status = self.get_status()
         if len(status['current_card']) == 0:
-            print('Do not pick card!')
-            self._next_one_lock = False
+            if other:
+                you = self.get_you(other)
+                self.throw_card(you['your_card'][:1])
+            else:
+                print('Do not pick card!')
+                self._next_one_lock = False
             return
 
         up = {}
@@ -159,13 +185,13 @@ class GameSocketHandler(WebSocketHandler):
         up['card'] = poker.to_list()
         self.update_status({'$set': up})
 
-        you = self.update_you({'$addToSet': {'your_card': c}, '$inc': {'card': 1}}, True, True)
+        you = self.update_you({'$addToSet': {'your_card': c}, '$inc': {'card': 1}}, True, True, other)
         if you['card'] >= CARD_LIMIT:
-            self.game_over(True)
-        self.next_one()
+            self.game_over(True, other=other)
+        self.next_one(other=other)
 
-    def throw_card(self, th_c):
-        you = self.get_you()
+    def throw_card(self, th_c, other=None):
+        you = self.get_you(other)
         for c in th_c:
             if not c in you['your_card']:
                 self._next_one_lock = False
@@ -178,12 +204,12 @@ class GameSocketHandler(WebSocketHandler):
             up = {}
             up['your_card'] = [c for c in you['your_card'] if not c in th_c]
             up['card'] = len(up['your_card'])
-            self.update_you({'$set': up})
+            self.update_you({'$set': up}, other=other)
             if up['card'] == 0:
-                self.game_over()
-            self.next_one()
+                self.game_over(other=other)
+            self.next_one(other=other)
         else:
-            if crnt_cs and your_cs and sebigtwo.CardSet.comp(crnt_cs, your_cs) == 0:
+            if crnt_set and your_set and sebigtwo.CardSet.comp(crnt_set, your_set) == 0:
                 print('Throw: Smaller.')
             else:
                 print('Throw: Not the same type.')
@@ -216,7 +242,21 @@ class GameSocketHandler(WebSocketHandler):
             self._next_one_lock = False
 
     # ----- Game Process -----
-    def next_one(self):
+    def add_deadline(self, name):
+        deadline = self.get_now_time() + ROUND_SEC
+        self.update_you({'$set': {'deadline': deadline}}, other=name)
+        def callback(self, name, deadline):
+            print('Player: %s\' deadline: %d' % (name, deadline))
+            print('Now: %d' % time.time())
+            you = self.get_you(other=name)
+            print('Two deadline: %s and %s'%(you['deadline'], deadline))
+            if you['deadline'] == deadline:
+                self.pick_card(other=name)
+        IOLoop.current().add_timeout(deadline+DEADLINE_BUFFER_SEC, callback, self, name, deadline)
+
+    def next_one(self, other=None):
+        if not other:
+            self.update_you({'$set': {'deadline': 0}})
         playing_user = self._M.find().count()
         status = self.get_status()
         trn = status['turn_num']
@@ -230,10 +270,11 @@ class GameSocketHandler(WebSocketHandler):
                 up['turn'] = next_p['name']
                 up['turn_num'] = trn
                 self.update_status({'$set': up})
+                self.add_deadline(next_p['name'])
                 self._next_one_lock = False
-                break
+                return
 
-    def game_over(self, loss=False):
+    def game_over(self, loss=False, other=None):
         # user = self.get_cookie('user')
         up = {}
         up['playing_user'] = -1
@@ -245,9 +286,23 @@ class GameSocketHandler(WebSocketHandler):
         up['status'] = 'gameover'
         up['your_card'] = []
         up['card'] = 0
-        you = self.update_you({'$set': up}, True, False)
+        you = self.update_you({'$set': up}, True, False, other)
         if len(you['your_card']):
             self.update_status({'$push': {'used_card': {'$each': you['your_card']}}})
+        # End the game
+        if status['playing_user'] == 1:
+            last_user = self._M.find_one({'status': 'playing'})
+            self.game_over(other=last_user['name'])
+        elif status['playing_user'] == 0:
+            self.stop_game()
+
+    # ----- Time Function -----
+    def get_now_time(self):
+        return IOLoop.current().time()
+
+    def check_deadline(self):
+        you = self.get_you()
+        return you['deadline'] == 0 or you['deadline'] > self.get_now_time()
 
     # ----- websocket ------
     def check_cache(self, key, data):
@@ -273,22 +328,18 @@ class GameSocketHandler(WebSocketHandler):
         if req == 'start':
             if status['status'] == 'init' and status['room_manager'] == user:
                 self.start_game()
-        elif req == 'pick':
-            print("pick")
-            if status['status'] == 'playing' and self._is_your_turn and not self._next_one_lock:
-                self._next_one_lock = True
-                self.pick_card()
         elif req == 'reset':
             if status['status'] == 'gameover' and status['room_manager'] == user:
                 self.reset_game()
-        elif req == 'throw':
-            if status['status'] == 'playing' and self._is_your_turn and not self._next_one_lock:
+        elif req == 'pick' or req == 'throw' or req == 'change':
+            if status['status'] == 'playing' and self._is_your_turn and not self._next_one_lock and self.check_deadline():
                 self._next_one_lock = True
-                self.throw_card(data['card'])
-        elif req == 'change':
-            if status['status'] == 'playing' and self._is_your_turn and not self._next_one_lock:
-                self._next_one_lock = True
-                self.change_card(data['card'])
+                if req == 'pick':
+                    self.pick_card()
+                elif req == 'throw':
+                    self.throw_card(data['card'])
+                elif req == 'change':
+                    self.change_card(data['card'])
 
     @gen.coroutine
     def game_loop(self):
@@ -302,9 +353,6 @@ class GameSocketHandler(WebSocketHandler):
                 continue
 
             self._is_your_turn = you['name'] == status['turn']
-            if not self._next_one_lock and status['playing_user'] == 1 and you['status'] == 'playing':
-                self.game_over()
-                self.stop_game()
 
             if not self.check_cache('players', player_list):
                 self.write_json({'$set': {'players': player_list}})

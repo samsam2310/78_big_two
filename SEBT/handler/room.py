@@ -39,6 +39,7 @@ class RoomHandler(BaseHandler):
                     'room_manager': user,
                     'place_cnt': 0,
                     'playing_user': 0,
+                    'time': 0,
                 }
             }, upsert=True)
         self.redirect('/game')
