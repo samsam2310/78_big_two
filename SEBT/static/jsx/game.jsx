@@ -8,7 +8,55 @@
             return (<div className={'current_card'}><span className={'current_card_title'}>Current Card</span><div className={'current_card_board'}>{cards}</div></div>);
         }
     });
+    var CountDown = React.createClass({
+        getInitialState: function() {
+            return {time: 0};
+        },
+        componentDidMount: function(nprop){
+            this._mount = true;
+            this.updateTime();
+        },
+        componentWillUnmount: function(){
+            this._mount = false;
+        },
+        getTime: function(){
+            var local = new Date().getTime()/1000;
+            return local + this.props.delay;
+        },
+        updateTime: function(){
+            var time = this.props.deadline - this.getTime();
+            if(time < 0)time = 0;
+            this.setState({time: time});
+            if(this._mount)setTimeout(this.updateTime, 50);
+        },
+        render: function() {
+            var time = 'OK';
+            if(this.props.deadline != 0)time = this.props.deadline - this.getTime();
+            if(time < 0)time = 0;
+            return (<span>{this.state.time.toFixed(1)}</span>);
+        }
+    });
     var Player = React.createClass({
+        render: function() {
+            var turn = (<span className={'not-turn'}>Not Turn</span>);
+            if(this.props.turn_num == this.props.index)turn = <span className={'turn'}>Turn!</span>
+            return (
+                <div className={'player'}>
+                    <span className={'player-name'}>{this.props.player['name']}</span>
+                    <span className={'player-card'}>
+                        <span className={'card_icon'}></span>
+                        <span className={'card_num'}>{this.props.player['card']}</span>
+                    </span>
+                    <span className={Number(this.props.player['conn'])==1?'avail player-conn':'unavail player-conn'}>
+                        {Number(this.props.player['conn'])==1?'Online':'Offline'}
+                    </span>
+                    {turn}
+                    <CountDown delay={this.props.delay} deadline={this.props.player.deadline}/>
+                </div>
+            );
+        }
+    });
+    var Control = React.createClass({
         getInitialState: function() {
             return {
                 status: []
@@ -82,6 +130,7 @@
                 players: [{name: 'a', card: 2},{name: 'b', card: 2}],
                 room_manager: 'Manager',
                 online_user: 0,
+                delay: 0,
             };
         },
         componentDidMount: function() {
@@ -90,11 +139,20 @@
             this.send = function(json) {
                 conn.send(JSON.stringify(json));
             };
+            this.socketState = function(){
+                return conn.readyState;
+            };
             var that = this;
             conn.onmessage = function(evt) {
                 var json = JSON.parse(evt.data);
                 that.handleMessage(json);
             };
+            setTimeout(this.syncTime, 1000);
+        },
+        syncTime: function(){
+            var state = this.socketState();
+            if(state == 1)this.send({'req': 'synctime', 'time': new Date().getTime()/1000});
+            if(state <= 1)setTimeout(this.syncTime, 10000);
         },
         handleMessage: function(json) {
             if(json.$set){
@@ -122,18 +180,15 @@
         render: function() {
             var that = this;
             var players = this.state.players.map(function(v, i){
-                var turn = (<span className={'not-turn'}>Not Turn</span>);
-                if(that.state.turn_num == i)turn = <span className={'turn'}>Turn!</span>
-                return (<div className={'player'}><span className={'player-name'}>{v['name']}</span><span className={'player-card'}><span className={'card_icon'}></span><span className={'card_num'}>{v['card']}</span></span><span className={Number(v['conn'])==1?'avail player-conn':'unavail player-conn'}>{Number(v['conn'])==1?'Online':'Offline'}</span>{turn}</div>);
+                return (<Player index={i} player={v} turn_num={that.state.turn_num} delay={that.state.delay}/>);
             });
             return (<div className={'thegame'}>
-
                 <div className={'status'}><span className={'attr_title'}>Status</span>{this.state.status}</div>
                 <Table cards={this.state.current_card}/>
                 <div className={'gametable'}>
                 {players}
                 </div>
-                <Player name={this.state.your_name}
+                <Control name={this.state.your_name}
                     cards={this.state.your_card}
                     start_btn={this.state.your_name==this.state.room_manager && this.state.status=='init'}
                     reset_btn={this.state.your_name==this.state.room_manager && this.state.status=='gameover'}

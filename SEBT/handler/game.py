@@ -21,8 +21,8 @@ from ..db import db_gen, get_list_without_key
 from ..poker import Poker, sebigtwo
 
 
-ROUND_SEC = 2
-DEADLINE_BUFFER_SEC = 3
+ROUND_SEC = 30
+DEADLINE_BUFFER_SEC = 2
 CARD_INIT = 5
 CARD_LIMIT = 13
 
@@ -129,7 +129,8 @@ class GameSocketHandler(WebSocketHandler):
             self._M.update({'_id': m['_id']}, {'$set': {
                     'status':'playing',
                     'your_card': card,
-                    'card': CARD_INIT
+                    'card': CARD_INIT,
+                    'deadline': 0
                 }})
             playing_user += 1
         fc = poker.pick()
@@ -143,9 +144,9 @@ class GameSocketHandler(WebSocketHandler):
                 'turn': fp['name'],
                 'used_card': [],
                 'place_cnt': 0,
-                'playing_user': playing_user,
-                'time': self.get_now_time()
+                'playing_user': playing_user
             }})
+        self.add_deadline(fp['name'])
 
     def stop_game(self):
         print('Stop Game')
@@ -158,11 +159,12 @@ class GameSocketHandler(WebSocketHandler):
 
     # ----- Game Action -----
     def pick_card(self, other=None):
+        print('pick!')
         status = self.get_status()
         if len(status['current_card']) == 0:
             if other:
                 you = self.get_you(other)
-                self.throw_card(you['your_card'][:1])
+                self.throw_card(you['your_card'][:1], other=other)
             else:
                 print('Do not pick card!')
                 self._next_one_lock = False
@@ -244,7 +246,10 @@ class GameSocketHandler(WebSocketHandler):
     # ----- Game Process -----
     def add_deadline(self, name):
         deadline = self.get_now_time() + ROUND_SEC
+        print('Add deadline to %s: %s' % (name, deadline))
         self.update_you({'$set': {'deadline': deadline}}, other=name)
+        you = self.get_you(other=name)
+        print('You: %s' % you['deadline'])
         def callback(self, name, deadline):
             print('Player: %s\' deadline: %d' % (name, deadline))
             print('Now: %d' % time.time())
@@ -252,11 +257,11 @@ class GameSocketHandler(WebSocketHandler):
             print('Two deadline: %s and %s'%(you['deadline'], deadline))
             if you['deadline'] == deadline:
                 self.pick_card(other=name)
+        
         IOLoop.current().add_timeout(deadline+DEADLINE_BUFFER_SEC, callback, self, name, deadline)
 
     def next_one(self, other=None):
-        if not other:
-            self.update_you({'$set': {'deadline': 0}})
+        self.update_you({'$set': {'deadline': 0}}, other=other)
         playing_user = self._M.find().count()
         status = self.get_status()
         trn = status['turn_num']
@@ -321,10 +326,12 @@ class GameSocketHandler(WebSocketHandler):
             self.write_json(data)
 
     def on_message(self, message):
+        # TODO: use data.get() instead of data['']
         user = self.get_cookie('user')
         status = self.get_status()
         data = json.loads(message)
         req = data['req']
+        print('Get: %s' % req)
         if req == 'start':
             if status['status'] == 'init' and status['room_manager'] == user:
                 self.start_game()
@@ -340,6 +347,11 @@ class GameSocketHandler(WebSocketHandler):
                     self.throw_card(data['card'])
                 elif req == 'change':
                     self.change_card(data['card'])
+        elif req == 'synctime':
+            local = data['time']
+            delay = self.get_now_time() - local
+            # print('synctime: %s' %delay)
+            self.write_json({'$set': {'delay': delay}})
 
     @gen.coroutine
     def game_loop(self):
@@ -363,13 +375,14 @@ class GameSocketHandler(WebSocketHandler):
                         'online_user': status['online_user'],
                         'status': status['status'],
                         'turn_num': status['turn_num'],
-                        'turn': status['turn'],
+                        'turn': status['turn']
                     }})
-            you_data = dict((k, you[k]) for k in ['your_card', 'name'])
+            you_data = dict((k, you[k]) for k in ['your_card', 'name', 'deadline'])
             if not self.check_cache('you', you_data):
                 self.write_json({'$set':{
                         'your_name': you_data['name'],
-                        'your_card': you_data['your_card']
+                        'your_card': you_data['your_card'],
+                        'deadline': you_data['deadline']
                     }})
 
             yield gen.sleep(0.5)
