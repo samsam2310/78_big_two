@@ -1,11 +1,25 @@
 (function(){
     console.log('init');
+    var STYLE = '♣◆♥♠';
+    var Card = React.createClass({
+        render: function() {
+            var card = this.props.card;
+            var s = STYLE[parseInt(card[0])];
+            var n = card[1]=='T'?'10':card[1];
+            return (<span className={'card'}>{s}{n}</span>);
+        }
+    });
     var Table = React.createClass({
         render: function() {
             var cards = this.props.cards.map(function(v){
-                return (<span className={'card'}>{v}</span>);
+                return (<Card card={v}/>);
             });
-            return (<div className={'current_card'}><span className={'current_card_title'}>Current Card</span><div className={'current_card_board'}>{cards}</div></div>);
+            return (
+                <div className={'current_card'}>
+                    <span className={'current_card_title'}>Current Card</span>
+                    <div className={'current_card_board'}>{cards}</div>
+                </div>
+            );
         }
     });
     var CountDown = React.createClass({
@@ -63,7 +77,14 @@
             };
         },
         componentWillReceiveProps: function(nxtProp) {
-            if(nxtProp.cards)this.setState({status: []});
+            if(nxtProp.cards && nxtProp.cards.length == this.props.cards.length){
+                for(var i in nxtProp.cards){
+                    if(this.props.cards[i] != nxtProp.cards[i]){
+                        this.setState({status: []});
+                        return;
+                    }
+                }
+            }
         },
         handleTrow: function(type){
             console.log('handle '+type);
@@ -73,11 +94,19 @@
             }
             this.props.onClick({type: type, card: ch_cs});
         },
+        createBtn: function(is_ok, name, type, className) {
+            if(is_ok){
+                var that = this;
+                return (<button className={className}
+                    onClick={function(){that.props.onClick({'type':type})}}>{name}</button>);
+            }
+            return null;
+        },
         render: function() {
             var that = this;
             var ch_c = this.props.cards.map(function(v, i){
                 if(that.state.status[i]){
-                    return (<span className={'card'}>{v}</span>);
+                    return (<Card card={v}/>);
                 }
                 return (<span/>);
             });
@@ -87,19 +116,12 @@
                     status[i] = !status[i];
                     that.setState({status: status});
                 }
-                return (<button onClick={click}>{v}</button>);
+                return (<button onClick={click}><Card card={v}/></button>);
             });
-            var that = this;
-            var start_btn = null;
-            if(this.props.start_btn){
-                start_btn = (<button className={'btn btn-success btn-start'}
-                    onClick={function(){that.props.onClick({'type':'start'})}}>開始</button>);
-            }
-            var reset_btn = null;
-            if(this.props.reset_btn){
-                reset_btn = (<button className={'btn btn-danger btn-reset'}
-                    onClick={function(){that.props.onClick({'type':'reset'})}}>重設</button>);
-            }
+            var start_btn = this.createBtn(this.props.start_btn, '開始', 'start', 'btn btn-success btn-start');
+            var reset_btn = this.createBtn(this.props.reset_btn, '重設', 'reset', 'btn btn-danger btn-reset');
+            var signin_btn = this.createBtn(this.props.signin_btn, '參加', 'signin', 'btn btn-danger');
+            var signout_btn = this.createBtn(this.props.signout_btn, '觀戰', 'signout', 'btn btn-danger');
             return (
                 <div>
                     <h4 className={'name'}>{this.props.name}</h4>
@@ -107,6 +129,8 @@
                     <div className={'user_card_set'}>{card}</div>
                     <div>
                       <div className={'form-inline'}>
+                        <div className={'form-group'}>{signin_btn}</div>
+                        <div className={'form-group'}>{signout_btn}</div>
                         <div className={'form-group'}>{start_btn}</div>
                         <div className={'form-group'}>{reset_btn}</div>
                         <div className={'form-group'}><button className={'btn btn-info btn-change'} disabled={!this.props.is_your_turn} onClick={function(){that.handleTrow('change')}}>換牌</button></div>
@@ -162,19 +186,11 @@
             }
         },
         handleClick: function(cli) {
-            if(cli.type=='start'){
-                this.send({'req': 'start'});
-            }else if(cli.type=='reset'){
-                this.send({'req': 'reset'});
-            }else if(cli.type=='throw'){
-                this.send({'req': 'throw', card: cli.card});
-                console.log('throw');
-                console.log(cli.card);
-            }else if(cli.type=='change'){
-                this.send({'req': 'change', card: cli.card});
-            }else if(cli.type=='pick'){
-                this.send({'req': 'pick'});
-                console.log('pick');
+            console.log(cli.type);
+            if(cli.type=='throw' || cli.type=='change'){
+                this.send({'req': cli.type, card: cli.card});
+            }else{
+                this.send({'req': cli.type});
             }
         },
         render: function() {
@@ -192,6 +208,8 @@
                     cards={this.state.your_card}
                     start_btn={this.state.your_name==this.state.room_manager && this.state.status=='init'}
                     reset_btn={this.state.your_name==this.state.room_manager && this.state.status=='gameover'}
+                    signin_btn={this.state.status=='init'&&this.state.your_status=='watching'}
+                    signout_btn={this.state.status=='init'&&this.state.your_status=='init'}
                     onClick={this.handleClick}
                     is_your_turn={this.state.turn==this.state.your_name}/>
             </div>);

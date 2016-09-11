@@ -110,7 +110,7 @@ class CardSet():
     @staticmethod
     def comp(a, b):
         if a._type == b._type:
-            return 1 if comp_poker(a._big, b._big, bigtwo=True) else 0
+            return 1 if comp_poker(a._big, b._big, bigtwo=True)==-1 else 0
         elif a._type >= FOUROFAKIND or b._type >= FOUROFAKIND:
             return 1 if a._type < b._type else 0
         return -1

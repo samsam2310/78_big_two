@@ -36,7 +36,7 @@ class RoomHandler(BaseHandler):
                     'current_card': [],
                     'card': [],
                     'used_card': [],
-                    'room_manager': user,
+                    'room_manager': '',
                     'place_cnt': 0,
                     'playing_user': 0,
                 }
