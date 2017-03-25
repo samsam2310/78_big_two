@@ -32,7 +32,6 @@ def make_app():
 PORT = int(os.environ.get('LISTEN_PORT', 8000))
 
 if __name__ == '__main__':
-    server = HTTPServer(make_app(), xheaders=True)
-    server.listen(PORT)
+    make_app().listen(PORT, xheaders=True)
     print('Server start at port: %d' % PORT)
     IOLoop.current().start()
