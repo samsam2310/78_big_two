@@ -13,28 +13,36 @@ class Controller():
 		self.room = room_status
 		self.you = your_status
 		self.players = players_status
+		self._module = None
 		self._cmd_dict = dict()
+
+	def load_module(self, module):
 		self._add_default_command()
 
 	def _add_default_command(self):
 		pass
 
 	def call(self, cmd, data):
-		self._cmd_dict[cmd](data)
+		fun = self._cmd_dict.get(cmd)
+		if fun:
+			fun(data)
 
 	def add_command(self, cmd_obj):
 		self._com_dict[cmd_obj.name] = cmd_obj
 
-	def is_room_manager(self):
+	def is_room_manager(self, *a, **kw):
 		return self.room['room_manager'] == self.you['_id']
 
-	def is_room_status(self, sts):
+	def is_room_status(self, sts, *a, **kw):
 		return self.room['status'] == sts
 
-	def is_your_status(self, sts):
+	def is_your_status(self, sts, *a, **kw):
 		return self.you['status'] == sts
 
-	def is_before_your_deadline(self):
+	def is_before_your_deadline(self, *a, **kw):
+		pass
+
+	def room_init(self):
 		pass
 
 	def start_game(self):

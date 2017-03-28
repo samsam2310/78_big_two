@@ -10,15 +10,10 @@ class Command():
 	def __init__(self, cmd, cmd_fun):
 		self._cmd = cmd
 		self._cmd_fun = cmd_fun
-		self._permission_checker = []
+		self._permission_checkers = []
 
 	def __call__(self, data, controller):
-		check = True
-		for fun in self._permission_checker:
-			if not fun():
-				check = False
-				break
-		if check:
+		if any(fun(data, controller) for fun in self._permission_checkers):
 			self._cmd_fun(data, controller)
 		else:
 			self._forbidden(data, controller)

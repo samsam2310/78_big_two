@@ -8,17 +8,14 @@ from __future__ import absolute_import, print_function, unicode_literals
 from .card import Card
 
 
+__all__ = ['BaseType', 'TypeSingle', 'TypePair', 'TypeFullHouse',
+            'TypeStraight', 'TypeFlush', 'TypeStraightFlush',
+            'TypeFourOfAKind', 'TypeDragon']
+
 class BaseType():
-    def __init__(self, cards, checked=True):
-        if checked:
-            self._cards = list(cards)
-            return
-        for card in cards:
-            if not isinstance(card, Card):
-                raise ValueError('Not an instance of Card.')
-        self._cards = sorted(cards)
-        if not self.check_type(self._cards):
-            raise ValueError('Type Error.')
+    def __init__(self, cards, typeid):
+        self._cards = list(cards)
+        self.typeid = typeid
 
     @classmethod
     def check_type(cls, cards):
@@ -26,13 +23,6 @@ class BaseType():
 
     def to_point(self):
         return 0
-
-    @classmethod
-    def get(cls, cards):
-        # cards must be sorted.
-        if cls.check_type(cards):
-            return cls(cards)
-        return None
 
 
 class TypeSingle(BaseType):
@@ -102,7 +92,7 @@ class TypeStraightFlush(TypeStraight):
                 TypeFlush.check_type(cards)
             )
 
-class FOUROFAKIND(BaseType):
+class TypeFourOfAKind(BaseType):
     @classmethod
     def check_type(cls, cards):
         number = [x.to_number() for x in cards]
