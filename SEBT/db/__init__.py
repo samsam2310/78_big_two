@@ -10,8 +10,10 @@ from pymongo import MongoClient
 
 import os
 
+from .realtimecollection import ReadTimeCollection
 
-__all__ = ['db_gen',]
+
+__all__ = ['DB','ColRoom','ColPlayer','ReadTimeCollection']
 
 
 DB_HOST = os.environ.get('DB_HOST', 'localhost')
@@ -28,3 +30,6 @@ def db_gen():
     if DB_USER != '':
         db.authenticate(DB_USER, DB_PWD)
     return db
+DB = db_gen()
+ColRoom = db['RoomStatus']
+ColPlayer = db['PlayerStatus']

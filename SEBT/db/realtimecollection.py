@@ -55,6 +55,15 @@ class RealTimeCollection():
 			self._callback_dict[key] = set()
 		self._callback_dict[key].add(self._handle_update)
 
+	def close(self, *a, **kw):
+		if not self._obj_id:
+			return
+		key = self._colname + str(self._obj_id)
+		s = self._callback_dict.get(key)
+		s.remove(self._handle_update) if s else None
+		self._callback_dict.pop(key) if (s and len(s) == 0) else None
+		self._colname = self._obj_id = self._data = None
+
 	def _handle_update(self, data):
 		self._data = data
 		if self._on_upodate:
