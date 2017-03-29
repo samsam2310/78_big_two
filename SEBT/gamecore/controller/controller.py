@@ -7,6 +7,10 @@ from __future__ import absolute_import, print_function, unicode_literals
 
 from tornado.ioloop import IOLoop
 
+import functools
+
+from ...db import RealTimeCollection, ColRoom, ColPlayer
+
 
 TIMEOUT_DELAY_SEC = 2
 RESET_GAME_SEC = 5
@@ -19,16 +23,61 @@ class Controller():
 		self.players = []
 		self._module = module
 		self._cmd_dict = dict()
-		self._add_default_command()
+		self._load_command()
 
-	def _add_default_command(self):
-		pass
+	def __del__(self):
+		self.room.close()
+		for player in self.players:
+			player.close()
 
-	def connect():
-		pass
+	def _load_command(self):
+		cmd = Command('signin', self.signin_game)
+		cmd.add_permission_checker(functools.partial(self.is_room_status, sts='init'))
+		self._cmd_dict['signin'] = cmd
+
+		cmd = Command('signout', self.signout_game)
+		cmd.add_permission_checker(functools.partial(self.is_room_status, sts='init'))
+		self._cmd_dict['signout'] = cmd
+
+		cmd = Command('start', self.start_game)
+		cmd.add_permission_checker(functools.partial(self.is_room_status, sts='init'))
+		cmd.add_permission_checker(self.is_room_manager)
+		self._cmd_dict['start'] = cmd
+
+		for cmd in self._module.Command_list:
+			self._cmd_dict[cmd.name] = cmd
+
+	def handle_room_status(self, data):
+		if self.room['status'] == 'playing' and not self.players:
+			# Connect to Player list
+			cursor = ColPlayer.find({'room_id': self.room['_id']}).sort('player_idx')
+			for player_status in cursor:
+				player = RealTimeCollection(ColPlayer.name, player_status)
+				self.players.append(player)
+				if self.your_uid == player['uid']:
+					self.you = player
+		elif self.room['status'] != 'playing' and self.players:
+			self.you = None
+			for player in players:
+				player.close()
+			self.players = []
+
+	def connect(self, room_id):
+		if self.room:
+			# Error
+			return
+		self.room = RealTimeCollection(ColRoom.name, ColRoom.find_one({'_id':room_id}))
+		self.add_callback(self.handle_room_status)
+		# Check one time(if room do not update immediately)
+		self.handle_room_status()
 
 	def disconnect():
-		pass
+		# Clear callback to avoid object references to each other
+		# and wait for Python to call destructor
+		self.room.clear_callback()
+		for player in self.players:
+			player.clear_callback()
+		del self._cmd_dict
 
 	def call(self, cmd, data):
 		fun = self._cmd_dict.get(cmd)
@@ -47,17 +96,19 @@ class Controller():
 		return self.you['status'] == sts
 
 	def is_before_your_deadline(self, *a, **kw):
-		pass
+		return self.get_ioloop_time() < self.you['deadline']
 
 	DEFAULT_ROOM_STATUS = {
 		'status': 'init',
 		'turn_uid': '',
 		'turn_idx': -1,
 		'player_uids': [],
-		'rank_idx': 1
+		'rank_idx': 1,
+		'room_manager': None
 	}
 	def room_init(self):
 		init_status = DEFAULT_ROOM_STATUS.copy().update(self._module.Default_RoomStatus)
+		init_status['room_manager'] = self.your_uid
 		self.room.update(init_status)
 
 	def start_game(self):
@@ -70,12 +121,14 @@ class Controller():
 			'status': 'playing',
 			'player_uids': player_uids,
 		}
-		sys_playerstatus = {
+		sys_playerstatus = [{
 			'status': 'playing',
 			'room_id': self.room['_id'],
 			'deadline': 0,
-			'conn': False,
-		}
+			'uid': uid,
+			'player_idx': idx,
+			'conn': False
+		} for idx, uid in enumerate(player_uids)]
 		self._module.start_game(player_uids, sys_roomstatus, sys_playerstatus, self)
 		self.start_turn_by_player_idx(0, self)
 
@@ -123,8 +176,8 @@ class Controller():
 
 	def reset_game(self):
 		player_uids = [x['uid'] for x in self.players if x['conn']]
-		for x in self.players:
-			x.close()
+		for player in self.players:
+			player.close()
 		self.players = []
 		self.you = None
 		room_status = DEFAULT_ROOM_STATUS.copy()
@@ -132,25 +185,30 @@ class Controller():
 		self.room.update(room_status)
 
 	def signin_game(self):
-		pass
+		new_player_uids = list(self.room['player_uids'])
+		new_player_uids.append(self.your_uid)
+		self.room.update({'player_uids': new_player_uids})
 
 	def signout_game(self):
-		pass
+		new_player_uids = list(self.room['player_uids'])
+		new_player_uids.remove(self.your_uid) if self.your_uid in new_player_uids else None
+		self.room.update({'player_uids': new_player_uids})
 
-	def change_room_manager(self):
-		pass
+	def change_room_manager(self, uid):
+		self.room.update({'room_manager': uid})
+
+	def _deadline_handler(self, uid, dltime, callback *a, **kw):
+		player = self.get_player_by_uid(uid)
+		if player and player['deadline'] == dltime:
+			callback(*a, **kw)
 
 	def set_deadline(self, uid, delay, callback, *a, **kw):
 		dltime = self.get_ioloop_time() + delay
 		player = next(x for x in self.players if x['uid'] == uid)
 		player.update({'deadline': dltime})
 
-		def handler(uid, dltime, callback, *a, **kw):
-			player = next(x for x in self.players if x['uid'] == uid)
-			if you['deadline'] == dltime:
-				callback(*a, **kw)
-
-		IOLoop.current().add_timeout(dltime+TIMEOUT_DELAY_SEC, handler, uid, dltime, callback, *a, **kw)
+		IOLoop.current().add_timeout(dltime+TIMEOUT_DELAY_SEC,
+										self._deadline_handler,uid, dltime, callback, *a, **kw)
 
 	def clear_deadline(self, uid):
 		player = self.get_player_by_uid(uid)

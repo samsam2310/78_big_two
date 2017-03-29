@@ -111,15 +111,15 @@ def is_playing(data, controller):
 Command_list = []
 
 cmd_draw = Command('draw', draw)
-Command.append(cmd_draw)
+Command_list.append(cmd_draw)
 
 cmd_throw = Command('throw', throw)
 cmd_throw.add_permission_checker(is_card_yours)
-Command.append(cmd_throw)
+Command_list.append(cmd_throw)
 
 cmd_change = Command('change', change)
 cmd_change.add_permission_checker(is_card_yours)
-Command.append(cmd_change)
+Command_list.append(cmd_change)
 
 for cmd in Command_list:
 	cmd.add_permission_checker(is_playing)
@@ -128,12 +128,11 @@ def start_game_status(player_uids, sys_roomstatus, sys_playerstatus, controller)
 	deck_num = len(player_uids) * HAND_NUM_LIMIT // 52 + 1
 	deck = Deck(multiple=deck_num)
 	deck.shuffle()
-	for uid in player_uids:
+	for idx, uid in enumerate(uplayer_uids):
 		player_status = Default_PlayerStatus.copy().update({
-			'uid': uid,
 			'hands': list(deck.draw_many(INIT_HAND_NUM))
 		})
-		playing_status.update(sys_playerstatus)
+		playing_status.update(sys_playerstatus[idx])
 		res = ColPlayer.insert_one(player_status)
 		player = RealTimeCollection(ColPlayer.name, ColPlayer.find_one(res.inserted_id))
 		controller.players.append(player)
