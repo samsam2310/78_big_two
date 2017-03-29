@@ -16,15 +16,8 @@ for i in range(4):
 
 
 class Deck():
-    def __init__(self, cards=None):
-        if cards:
-            for c in cards:
-                if not c in POKER_CARD:
-                    raise ValueError('Card invaild: %s' % c)
-
-            self._cards = list(cards)
-        else:
-            self._cards = list(POKER_CARD)
+    def __init__(self, cards=None, mutiple=1):
+        self._cards = list(cards) if cards else POKER_CARD*mutiple
 
     def shuffle(self):
         random.shuffle(self._cards)

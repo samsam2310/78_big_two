@@ -9,6 +9,7 @@ from tornado.ioloop import IOLoop
 
 
 TIMEOUT_DELAY_SEC = 2
+RESET_GAME_SEC = 5
 
 class Controller():
 	def __init__(self, module, your_uid):
@@ -20,13 +21,13 @@ class Controller():
 		self._cmd_dict = dict()
 		self._add_default_command()
 
-	def __enter__():
-		pass
-
-	def __exit__():
-		pass
-
 	def _add_default_command(self):
+		pass
+
+	def connect():
+		pass
+
+	def disconnect():
 		pass
 
 	def call(self, cmd, data):
@@ -48,48 +49,87 @@ class Controller():
 	def is_before_your_deadline(self, *a, **kw):
 		pass
 
+	DEFAULT_ROOM_STATUS = {
+		'status': 'init',
+		'turn_uid': '',
+		'turn_idx': -1,
+		'player_uids': [],
+		'rank_idx': 1
+	}
 	def room_init(self):
-		init = {
-			'status': 'init',
-			'turn_uid': '',
-			'turn_idx': -1,
-			'playing_user_uids': []
-		}
-		init.update(self._module.Default_RoomStatus)
-		self.room.update({'$set': init})
+		init_status = DEFAULT_ROOM_STATUS.copy().update(self._module.Default_RoomStatus)
+		self.room.update(init_status)
 
 	def start_game(self):
-		playing_user_num = len(self.room['playing_user_uids'])
-		if playing_user_num == 1:
+		player_num = len(self.room['player_uids'])
+		if player_num == 1:
 			# Only one player.
 			return
-		playing_user_uids = list(self.room['playing_user_uids'])
+		player_uids = list(self.room['player_uids'])
 		sys_roomstatus = {
 			'status': 'playing',
-			'turn_idx': -1,
-			'turn_uid': '',
-			'playing_user_uids': playing_user_uids,
+			'player_uids': player_uids,
 		}
 		sys_playerstatus = {
 			'status': 'playing',
 			'room_id': self.room['_id'],
-			'deadline': 0
+			'deadline': 0,
+			'conn': False,
 		}
-		self._module.start_game(playing_user_uids, sys_roomstatus, sys_playerstatus, self)
-		self.start_turn(0, self)
+		self._module.start_game(player_uids, sys_roomstatus, sys_playerstatus, self)
+		self.start_turn_by_player_idx(0, self)
 
-	def get_next_one_idx(self):
-		pass
+	def get_player_by_uid(self, uid):
+		return next((x for x in self.players if x['uid'] == uid), None)
 
-	def start_turn(self, player_idx):
-		self.room.update({'$set': {
+	def get_player_idx_by_uid(self, uid):
+		return next((idx for idx,x in enumerate(self.players) if x['uid'] == uid), -1)
+
+	def get_playing_num(self):
+		return sum(x['status']=='playing' for x in self.players)
+
+	def next_player_turn_by_uid(self, uid):
+		idx = get_player_idx_by_uid(uid)
+		players = self.players
+		plen = len(players)
+		nx_idx = next( i % plen
+						for i in range(idx+1, idx+plen)
+						if players[i%plen]['status'] == 'playing', -1)
+		if nx_idx == -1:
+			# Game is done, stop game.
+			return self.stop_game()
+		playing_num = self.get_playing_num()
+		if playing_num == 1:
+			return self._module.last_one_player_by_idx(idx, self)
+		self.start_turn_by_player_idx(nx_idx)
+
+	def start_turn_by_player_idx(self, player_idx):
+		self.room.update({
 				'turn_idx': player_idx,
-				'turn_uid': self.room['playing_user_uids'][player_idx]
-			}})
-		self._module.start_turn(player_idx, self)
+				'turn_uid': self.room['player_uids'][player_idx]
+			})
+		self._module.start_turn_by_player_idx(player_idx, self)
 
 	def stop_game(self):
-		pass
+		# TODO: Record scoreboard
+		self.room.update({
+				'status': 'gameover',
+				'turn_idx': -1,
+				'turn_uid': '',
+				'card_on_table': []
+			})
+		reset_time = self.get_ioloop_time() + RESET_GAME_SEC
+		IOLoop.current().add_timeout(reset_time, self.reset_game)
+
+	def reset_game(self):
+		player_uids = [x['uid'] for x in self.players if x['conn']]
+		for x in self.players:
+			x.close()
+		self.players = []
+		self.you = None
+		room_status = DEFAULT_ROOM_STATUS.copy()
+		room_status.update({'player_uids': player_uids})
+		self.room.update(room_status)
 
 	def signin_game(self):
 		pass
@@ -103,7 +143,7 @@ class Controller():
 	def set_deadline(self, uid, delay, callback, *a, **kw):
 		dltime = self.get_ioloop_time() + delay
 		player = next(x for x in self.players if x['uid'] == uid)
-		player.update({'$set': {'deadline': dltime}})
+		player.update({'deadline': dltime})
 
 		def handler(uid, dltime, callback, *a, **kw):
 			player = next(x for x in self.players if x['uid'] == uid)
@@ -113,11 +153,34 @@ class Controller():
 		IOLoop.current().add_timeout(dltime+TIMEOUT_DELAY_SEC, handler, uid, dltime, callback, *a, **kw)
 
 	def clear_deadline(self, uid):
-		player = next(x for x in self.players if x['uid'] == uid)
-		player.update({'$set': {'deadline': 0}})
+		player = self.get_player_by_uid(uid)
+		player.update({'deadline': 0})
 
-	def game_over(self):
-		pass
+	RANK_LOSS = 1
+	RANK_FRONT = 2
+	RANK_BACK = 3 # Cannot be use with RANK_LOSS
+	def gameover_by_uid(self, uid, rank_opt=RANK_FRONT):
+		player = self.get_player_by_uid(uid)
+		new_rank_idx = self.room['rank_idx']
+		if rank_opt == self.RANK_FRONT:
+			rank = new_rank_idx
+			new_rank_idx += 1
+		elif rank_opt == self.RANK_BACK:
+			playing_num = self.get_playing_num()
+			rank = playing_num + new_rank_idx - 1
+		elif rank_opt == self.RANK_LOSS:
+			rank = -1
+		else:
+			# Error
+			rank = -1
+		sys_roomstatus = {
+			'rank_idx': new_rank_idx
+		}
+		sys_playerstatus = {
+			'status': 'gameover',
+			'rank': rank
+		}
+		self._module.gameover_by_uid(uid, sys_roomstatus, sys_roomstatus, self)
 
 	def get_ioloop_time(self):
-		pass
+		return IOLoop.current().time()

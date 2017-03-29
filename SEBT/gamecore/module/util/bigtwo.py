@@ -30,7 +30,7 @@ def get_cardset_from_string_list(card_strings):
 			return set_type(cards, idx)
 	return None
 
-def is_type_greater_then(a, b):
+def is_cardset_greater(a, b):
 	if a.typeid == b.typeid:
 		return a.to_point() > b.to_point()
 	return a.typeid >= MONSTER_TYPE_ID and a.typeid > b.typeid
