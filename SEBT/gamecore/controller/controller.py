@@ -57,10 +57,10 @@ class Controller():
 				if self.your_uid == player['uid']:
 					self.you = player
 		elif self.room['status'] != 'playing' and self.players:
-			self.you = None
 			for player in players:
 				player.close()
 			self.players = []
+			self.you = None
 
 	def connect(self, room_id):
 		if self.room:
